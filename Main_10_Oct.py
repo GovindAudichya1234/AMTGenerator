@@ -149,8 +149,6 @@ class MCQGenerator:
             top_indices = np.argsort(similarities)[-top_n:]
             relevant_context = " ".join([self.knowledge_base[i].page_content for i in top_indices])
 
-            st.write("Context extraction completed")
-            st.write(relevant_context)
             return relevant_context
         except Exception as e:
             st.error(f"Error during context extraction: {e}")
@@ -743,7 +741,6 @@ def contextual_deduplication_check(questions_list, similarity_threshold):
             unique_embeddings.append(question_embedding)  # Store the embedding of the unique question
         else:
             st.write("Question Same: ",question)
-            st.write("Question Embeddings: ",question_embedding)
 
     return unique_questions
 def filter_out_similar_pdf_questions(generated_questions, pdf_questions, similarity_threshold=80):
