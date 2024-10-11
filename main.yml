@@ -1,0 +1,25 @@
+name: Run My Application
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  run-app:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Google Credentials
+        env:
+          CLIENT_SECRETS: ${{ secrets.client_secrets }}
+        run: echo "$CLIENT_SECRETS" > client_secrets.json
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the application
+        run: python main.py
