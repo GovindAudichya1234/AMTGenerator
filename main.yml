@@ -25,10 +25,10 @@ jobs:
 
       - name: Set up Google Service Account
         # Write the service account JSON to a file from the CLIENT_SECRETS secret
-        run: |
-          echo "${{ secrets.CLIENT_SECRETS }}" > service_account.json
-
+        run: echo "${{ secrets.CLIENT_SECRETS }}" > service_account.json
+      
       - name: Run the MCQ Generator
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service_account.json  # Use the JSON file for authentication
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service_account.json  # Path to the service account JSON file
         run: python main.py
+      
