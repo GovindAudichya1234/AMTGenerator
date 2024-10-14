@@ -1,4 +1,4 @@
-name: Run My Application
+name: Deploy Streamlit App
 
 on:
   push:
@@ -6,20 +6,21 @@ on:
       - main
 
 jobs:
-  run-app:
+  deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-      - name: Set up Google Credentials
-        env:
-          CLIENT_SECRETS: ${{ secrets.client_secrets }}
-        run: echo "$CLIENT_SECRETS" > client_secrets.json
+    - name: Setup Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+    - name: Install dependencies
+      run: pip install -r requirements.txt
 
-      - name: Run the application
-        run: python main.py
+    - name: Deploy to Streamlit
+      env:
+        client_secrets: ${{ secrets.client_secrets }}  # Access the secret here
+      run: streamlit run main.py
