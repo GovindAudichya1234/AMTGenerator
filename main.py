@@ -815,7 +815,7 @@ class DriveService:
         SCOPES = ['https://www.googleapis.com/auth/drive']
         
         # Retrieve the decryption key from environment variables (set in GitHub Secrets)
-        decryption_key = os.getenv('DECRYPTION_KEY')
+        decryption_key = st.secrets['DECRYPTION_KEY']
         if not decryption_key:
             st.error("Decryption key not found in environment.")
             raise ValueError("Decryption key not found.")
