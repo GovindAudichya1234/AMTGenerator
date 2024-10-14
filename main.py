@@ -798,32 +798,40 @@ def is_duplicate(question, existing_questions, generator, threshold):
     # Check if the maximum similarity exceeds the threshold
     return np.max(similarity_scores) > threshold
 
+
 class DriveService:
-    def __init__(self, root_folder_id):
-        # No need to pass 'service_account_file' here, as we are reading from the environment
-        self.service = self.authenticate_service_account()
+    def __init__(self, root_folder_id, encrypted_file_path="ECS.json"):
+        """
+        Initializes the DriveService with the root folder ID and the encrypted file path.
+        """
+        self.service = self.authenticate_service_account(encrypted_file_path)
         self.root_folder_id = root_folder_id
 
-    def authenticate_service_account(self):
+    def authenticate_service_account(self, encrypted_file_path):
+        """
+        Authenticates using the encrypted service account file and decryption key.
+        """
         SCOPES = ['https://www.googleapis.com/auth/drive']
+        
+        # Retrieve the decryption key from environment variables (set in GitHub Secrets)
+        decryption_key = os.getenv('DECRYPTION_KEY')
+        if not decryption_key:
+            st.error("Decryption key not found in environment.")
+            raise ValueError("Decryption key not found.")
 
-        # Retrieve the encrypted credentials and decryption key from environment variables
-        encrypted_credentials = os.getenv('ECS')  # Add your encrypted secret here
-        decryption_key = os.getenv('DKEY')  # Add your decryption key as a secret
-
-        if not encrypted_credentials or not decryption_key:
-            st.error("Encrypted credentials or decryption key not found in environment.")
-            raise ValueError("Encrypted credentials or decryption key not found in environment.")
-
+        # Read the encrypted file from the repository
         try:
-            # Decrypt the service account credentials
-            encrypted_credentials = encrypted_credentials.encode()  # Ensure it's in bytes
-            credentials_data = decrypt_secret(encrypted_credentials, decryption_key)
+            with open(encrypted_file_path, 'rb') as encrypted_file:
+                encrypted_data = encrypted_file.read()
 
-            # Convert the decrypted credentials from a JSON string to a dictionary
-            credentials_info = json.loads(credentials_data)
+            # Decrypt the file contents
+            cipher = Fernet(decryption_key.encode())  # Decryption key should be in bytes
+            decrypted_data = cipher.decrypt(encrypted_data)
 
-            # Create Google Drive API credentials from the decrypted data
+            # Parse the decrypted JSON string to create credentials
+            credentials_info = json.loads(decrypted_data)
+
+            # Create Google Drive API credentials from the decrypted info
             credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
 
             # Build the Google Drive API service
@@ -831,7 +839,7 @@ class DriveService:
             return service
 
         except Exception as e:
-            st.error(f"Failed to authenticate service account: {e}")
+            st.error(f"Error during service account authentication: {e}")
             raise
         
     def download_files(self, course_name, save_path):
