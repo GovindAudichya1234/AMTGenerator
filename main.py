@@ -803,13 +803,23 @@ class DriveService:
         self.service = self.authenticate_service_account(service_account_file)
         self.root_folder_id = root_folder_id
 
-    def authenticate_service_account(self, service_account_file):
+    def authenticate_service_account(self):
         SCOPES = ['https://www.googleapis.com/auth/drive']
-        credentials = service_account.Credentials.from_service_account_file(
-            service_account_file, scopes=SCOPES)
+
+        # Retrieve the secret from environment variables
+        service_account_info = os.getenv('client_secrets')
+
+        if service_account_info is None:
+            raise ValueError("Service account credentials not found in environment.")
+
+        # Parse the JSON string to create credentials
+        service_account_info_dict = json.loads(service_account_info)
+        credentials = service_account.Credentials.from_service_account_info(service_account_info_dict, scopes=SCOPES)
+        
+        # Build the Google Drive API service
         service = build('drive', 'v3', credentials=credentials)
         return service
-
+        
     def download_files(self, course_name, save_path):
         """
         Download the required knowledge base files for the specified course from Google Drive.
