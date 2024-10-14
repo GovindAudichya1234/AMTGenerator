@@ -1,46 +1,37 @@
-name: Process PDF and Generate MCQs
+name: Deploy
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
     branches:
       - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: production  # Specify the environment here
 
     steps:
-    # Checkout the code from the repository
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    # Set up Python
-    - name: Set up Python 3.x
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.x'
+      # Decrypt the secret
+      - name: Decrypt the client secret
+        run: |
+          echo "${{ secrets.DECRYPTION_KEY }}" > decryption_key.txt
+          python3 decrypt.py
 
-    # Install dependencies from requirements.txt
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      # Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
 
-    # Decrypt ECS.json file using DECRYPTION_KEY stored in GitHub Secrets
-    - name: Decrypt ECS.json
-      run: |
-        echo "${{ secrets.DECRYPTION_KEY }}" > decryption_key.txt
-        openssl enc -aes-256-cbc -d -in ECS.json.enc -out ECS.json -k $(cat decryption_key.txt)
+      # Install dependencies
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
 
-    # Set environment variable for Google Application Credentials
-    - name: Set GOOGLE_APPLICATION_CREDENTIALS
-      run: echo "GOOGLE_APPLICATION_CREDENTIALS=ECS.json" >> $GITHUB_ENV
-
-    # Run the Python script
-    - name: Run PDF Processing and MCQ Generation
-      run: |
-        python main.py
-
+      # Run your application or tests
+      - name: Run your code
+        run: |
+          python3 main.py
