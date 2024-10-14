@@ -799,8 +799,9 @@ def is_duplicate(question, existing_questions, generator, threshold):
     return np.max(similarity_scores) > threshold
 
 class DriveService:
-    def __init__(self, service_account_file, root_folder_id):
-        self.service = self.authenticate_service_account(service_account_file)
+    def __init__(self, root_folder_id):
+        # No need to pass 'service_account_file' here, as we are reading from the environment
+        self.service = self.authenticate_service_account()
         self.root_folder_id = root_folder_id
 
     def authenticate_service_account(self):
