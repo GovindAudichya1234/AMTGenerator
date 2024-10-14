@@ -1,4 +1,4 @@
-name: Deploy Streamlit App
+name: Run MCQ Generator
 
 on:
   push:
@@ -6,24 +6,28 @@ on:
       - main
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.x'
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.12'
 
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install python-Levenshtein  # For faster fuzzy matching
 
-    - name: Run Streamlit
-      env:
-        CLIENT_SECRETS: ${{ secrets.CLIENT_SECRETS }}   # Pass secret here
-      run: |
-        streamlit run main.py
+      - name: Set up Google Service Account
+        # Write the service account JSON to a file from the CLIENT_SECRETS secret
+        run: echo "${{ secrets.CLIENT_SECRETS }}" > service_account.json
+
+      - name: Run the MCQ Generator
+        env:
+          CLIENT_SECRETS: ${{ secrets.CLIENT_SECRETS }}  # Load the secret as an environment variable
+        run: python main.py
