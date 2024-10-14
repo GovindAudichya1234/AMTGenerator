@@ -807,29 +807,32 @@ class DriveService:
     def authenticate_service_account(self):
         SCOPES = ['https://www.googleapis.com/auth/drive']
 
-        # Retrieve the secret from environment variables
-        #service_account_info = os.getenv('CLIENT_SECRETS')
+        # Retrieve the encrypted credentials and decryption key from environment variables
+        encrypted_credentials = os.getenv('ENCRYPTED_CLIENT_SECRETS')  # Add your encrypted secret here
+        decryption_key = os.getenv('DECRYPTION_KEY')  # Add your decryption key as a secret
 
-        #if not service_account_info:
-        #    raise ValueError("Service account credentials not found in environment.")
-        credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-        if not credentials_path:
-            st.error("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.")
-            raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set or is empty.")
-        else:
-            st.write(f"GOOGLE_APPLICATION_CREDENTIALS is set to: {credentials_path}")
-    
-        # Use the path to create credentials
-        credentials = service_account.Credentials.from_service_account_file(
-            credentials_path, scopes=SCOPES
-        )
-        # Parse the JSON string to create credentials
-        #service_account_info_dict = json.loads(service_account_info)
-        #credentials = service_account.Credentials.from_service_account_info(service_account_info_dict, scopes=SCOPES)
-        
-        # Build the Google Drive API service
-        service = build('drive', 'v3', credentials=credentials)
-        return service
+        if not encrypted_credentials or not decryption_key:
+            st.error("Encrypted credentials or decryption key not found in environment.")
+            raise ValueError("Encrypted credentials or decryption key not found in environment.")
+
+        try:
+            # Decrypt the service account credentials
+            encrypted_credentials = encrypted_credentials.encode()  # Ensure it's in bytes
+            credentials_data = decrypt_secret(encrypted_credentials, decryption_key)
+
+            # Convert the decrypted credentials from a JSON string to a dictionary
+            credentials_info = json.loads(credentials_data)
+
+            # Create Google Drive API credentials from the decrypted data
+            credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
+
+            # Build the Google Drive API service
+            service = build('drive', 'v3', credentials=credentials)
+            return service
+
+        except Exception as e:
+            st.error(f"Failed to authenticate service account: {e}")
+            raise
         
     def download_files(self, course_name, save_path):
         """
