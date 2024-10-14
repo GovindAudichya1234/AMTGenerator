@@ -940,7 +940,6 @@ def main():
     #knowledge_base_path, embeddings_path = get_knowledge_base_path(selected_knowledge)
 
     drive_service = DriveService(
-    service_account_file='client_secrets.json',
     root_folder_id=root_folder_id
     )
     
