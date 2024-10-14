@@ -1,15 +1,18 @@
-name: CI
+name: Deploy Streamlit App
 
-on: [push]
+on:
+  push:
+    branches:
+      - main
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    
-    # Set up Python
+    - name: Checkout code
+      uses: actions/checkout@v2
+
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
@@ -19,9 +22,8 @@ jobs:
       run: |
         pip install -r requirements.txt
 
-    # Make sure to pass the CLIENT_SECRETS environment variable
-    - name: Run code
+    - name: Run Streamlit
       env:
-        CLIENT_SECRETS: ${{ secrets.CLIENT_SECRETS }}
+        CLIENT_SECRETS: ${{ secrets.CLIENT_SECRETS }}   # Pass secret here
       run: |
-        python main.py
+        streamlit run main.py
