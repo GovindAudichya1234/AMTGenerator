@@ -24,10 +24,10 @@ jobs:
           pip install python-Levenshtein  # For faster fuzzy matching
 
       - name: Set up Google Service Account
-        # Write the CLIENT_SECRETS to a file called service_account.json
+        # Write the service account JSON to a file from the CLIENT_SECRETS secret
         run: echo "${{ secrets.CLIENT_SECRETS }}" > service_account.json
 
       - name: Run the MCQ Generator
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: service_account.json  # Set the path for authentication
+          CLIENT_SECRETS: ${{ secrets.CLIENT_SECRETS }}  # Load the secret as an environment variable
         run: python main.py
