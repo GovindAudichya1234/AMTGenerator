@@ -75,7 +75,7 @@ jupyterlab_pygments==0.3.0
 keras==3.5.0
 langchain==0.2.15
 langchain-community==0.2.15
-langchain-core<0.3.0 and >=0.2.37
+langchain-core>=0.2.37
 langchain-openai==0.1.23
 langchain-text-splitters==0.2.2
 langsmith==0.1.106
