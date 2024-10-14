@@ -808,14 +808,16 @@ class DriveService:
         SCOPES = ['https://www.googleapis.com/auth/drive']
 
         # Retrieve the secret from environment variables
-        service_account_info = os.getenv('CLIENT_SECRETS')
+        #service_account_info = os.getenv('CLIENT_SECRETS')
 
-        if not service_account_info:
-            raise ValueError("Service account credentials not found in environment.")
-
+        #if not service_account_info:
+        #    raise ValueError("Service account credentials not found in environment.")
+        credentials = service_account.Credentials.from_service_account_file(
+        os.getenv('GOOGLE_APPLICATION_CREDENTIALS'), scopes=SCOPES
+    `    )
         # Parse the JSON string to create credentials
-        service_account_info_dict = json.loads(service_account_info)
-        credentials = service_account.Credentials.from_service_account_info(service_account_info_dict, scopes=SCOPES)
+        #service_account_info_dict = json.loads(service_account_info)
+        #credentials = service_account.Credentials.from_service_account_info(service_account_info_dict, scopes=SCOPES)
         
         # Build the Google Drive API service
         service = build('drive', 'v3', credentials=credentials)
