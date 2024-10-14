@@ -808,7 +808,7 @@ class DriveService:
         SCOPES = ['https://www.googleapis.com/auth/drive']
 
         # Retrieve the secret from environment variables
-        service_account_info = os.getenv('client_secrets')
+        service_account_info = os.getenv('CLIENT_SECRETS')
 
         if service_account_info is None:
             raise ValueError("Service account credentials not found in environment.")
