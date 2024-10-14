@@ -167,7 +167,7 @@ tensorflow==2.17.0
 tensorflow-estimator==2.13.0
 tensorflow-hub==0.16.1
 
-tensorflow-io-gcs-filesystem==0.31.0
+tensorflow-io-gcs-filesystem==0.37.1
 tensorstore==0.1.64
 termcolor==2.4.0
 tf_keras==2.17.0
