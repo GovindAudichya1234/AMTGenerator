@@ -810,7 +810,7 @@ class DriveService:
         # Retrieve the secret from environment variables
         service_account_info = os.getenv('CLIENT_SECRETS')
 
-        if service_account_info is None:
+        if not service_account_info:
             raise ValueError("Service account credentials not found in environment.")
 
         # Parse the JSON string to create credentials
