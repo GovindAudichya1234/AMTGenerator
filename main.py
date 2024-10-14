@@ -1,6 +1,7 @@
 # Importing necessary libraries
 # Importing necessary libraries
 from transformers import DistilBertTokenizer, TFDistilBertModel
+import toml
 import jax.numpy as jnp
 import jax
 import threading
@@ -37,7 +38,7 @@ from faiss import IndexFlatL2
 from sklearn.decomposition import PCA
 import asyncio
 import tensorflow_hub as hub
-
+secrets = toml.load(".streamlit/secrets.toml")
 class PDFProcessor:
     def __init__(self, input_path, output_path):
         """
@@ -815,7 +816,7 @@ class DriveService:
         SCOPES = ['https://www.googleapis.com/auth/drive']
         
         # Retrieve the decryption key from environment variables (set in GitHub Secrets)
-        decryption_key = st.secrets['DK']
+        decryption_key = secrets['DK']
         if not decryption_key:
             st.error("Decryption key not found in environment.")
             raise ValueError("Decryption key not found.")
