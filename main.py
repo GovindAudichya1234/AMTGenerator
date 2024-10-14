@@ -812,8 +812,16 @@ class DriveService:
 
         #if not service_account_info:
         #    raise ValueError("Service account credentials not found in environment.")
+        credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        if not credentials_path:
+            st.error("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set.")
+            raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set or is empty.")
+        else:
+            st.write(f"GOOGLE_APPLICATION_CREDENTIALS is set to: {credentials_path}")
+    
+        # Use the path to create credentials
         credentials = service_account.Credentials.from_service_account_file(
-        os.getenv('GOOGLE_APPLICATION_CREDENTIALS'), scopes=SCOPES
+            credentials_path, scopes=SCOPES
         )
         # Parse the JSON string to create credentials
         #service_account_info_dict = json.loads(service_account_info)
