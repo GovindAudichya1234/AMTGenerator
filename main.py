@@ -808,8 +808,8 @@ class DriveService:
         SCOPES = ['https://www.googleapis.com/auth/drive']
 
         # Retrieve the encrypted credentials and decryption key from environment variables
-        encrypted_credentials = os.getenv('ENCRYPTED_CLIENT_SECRETS')  # Add your encrypted secret here
-        decryption_key = os.getenv('DECRYPTION_KEY')  # Add your decryption key as a secret
+        encrypted_credentials = os.getenv('ECS')  # Add your encrypted secret here
+        decryption_key = os.getenv('DKEY')  # Add your decryption key as a secret
 
         if not encrypted_credentials or not decryption_key:
             st.error("Encrypted credentials or decryption key not found in environment.")
