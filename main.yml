@@ -1,7 +1,10 @@
-name: Run MCQ Generator
+name: Process PDF and Generate MCQs
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
     branches:
       - main
 
@@ -10,25 +13,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+    # Checkout the code from the repository
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-      - name: Set up Python
-        uses: actions/setup-python@v2
-        with:
-          python-version: '3.12'
+    # Set up Python
+    - name: Set up Python 3.x
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install python-Levenshtein  # For faster fuzzy matching
+    # Install dependencies from requirements.txt
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Set up Google Service Account
-        # Write the service account JSON to a file from the CLIENT_SECRETS secret
-        run: echo "${{ secrets.CLIENT_SECRETS }}" > service_account.json
-      
-      - name: Run the MCQ Generator
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service_account.json  # Path to the service account JSON file
-        run: python main.py
-      
+    # Decrypt ECS.json file using DECRYPTION_KEY stored in GitHub Secrets
+    - name: Decrypt ECS.json
+      run: |
+        echo "${{ secrets.DECRYPTION_KEY }}" > decryption_key.txt
+        openssl enc -aes-256-cbc -d -in ECS.json.enc -out ECS.json -k $(cat decryption_key.txt)
+
+    # Set environment variable for Google Application Credentials
+    - name: Set GOOGLE_APPLICATION_CREDENTIALS
+      run: echo "GOOGLE_APPLICATION_CREDENTIALS=ECS.json" >> $GITHUB_ENV
+
+    # Run the Python script
+    - name: Run PDF Processing and MCQ Generation
+      run: |
+        python main.py
+
