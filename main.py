@@ -1,44 +1,114 @@
 # Importing necessary libraries
 # Importing necessary libraries
-from transformers import DistilBertTokenizer, TFDistilBertModel
-import toml
+
+from google.cloud import storage
+import os
 import jax.numpy as jnp
 import jax
 import threading
 from fuzzywuzzy import fuzz
 import streamlit as st
 import os
-from pydrive.auth import GoogleAuth
-from pydrive.drive import GoogleDrive
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-import googleapiclient
 import re
 import pickle
 import json
-from cryptography.fernet import Fernet
 import fitz
 import pandas as pd
-import time
 import csv
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from langchain_core.output_parsers.string import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
 from langchain_core.messages import SystemMessage
-from langchain_core.runnables import RunnablePassthrough, RunnablePick
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_community.document_loaders import PDFMinerLoader
 import math
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from faiss import IndexFlatL2
 from sklearn.decomposition import PCA
 import asyncio
 import tensorflow_hub as hub
-secrets = toml.load(".streamlit/secrets.toml")
+import time
+
+class ContextFileManager:
+    tracker_file = "context_usage_tracker.json"
+    tracker_lock = threading.Lock() 
+    timeout = 200  # Timeout in seconds for orphan file deletion
+
+    @classmethod
+    def _load_tracker(cls):
+        if os.path.exists(cls.tracker_file):
+            with open(cls.tracker_file, "r") as f:
+                return json.load(f)
+        return {}
+
+    @classmethod
+    def _save_tracker(cls, tracker_data):
+        with open(cls.tracker_file, "w") as f:
+            json.dump(tracker_data, f, indent=4)
+
+    @classmethod
+    def add_usage(cls, context_file_path):
+        with cls.tracker_lock:
+            tracker_data = cls._load_tracker()
+            if context_file_path in tracker_data:
+                if isinstance(tracker_data[context_file_path], dict):
+                    tracker_data[context_file_path]["count"] += 1
+                else:
+                    tracker_data[context_file_path] = {"count": 1, "last_used": time.time()}
+            else:
+                tracker_data[context_file_path] = {"count": 1, "last_used": time.time()}
+            tracker_data[context_file_path]["last_used"] = time.time()  # Update timestamp
+            cls._save_tracker(tracker_data)
+
+    @classmethod
+    def update_last_used(cls, context_file_path):
+        """Update the last_used timestamp when a file is accessed."""
+        with cls.tracker_lock:
+            tracker_data = cls._load_tracker()
+            if context_file_path in tracker_data and isinstance(tracker_data[context_file_path], dict):
+                tracker_data[context_file_path]["last_used"] = time.time()
+            cls._save_tracker(tracker_data)
+
+    @classmethod
+    def remove_usage(cls, context_file_path):
+        with cls.tracker_lock:
+            tracker_data = cls._load_tracker()
+            if context_file_path in tracker_data:
+                if isinstance(tracker_data[context_file_path], dict) and "count" in tracker_data[context_file_path]:
+                    tracker_data[context_file_path]["count"] -= 1
+                    if tracker_data[context_file_path]["count"] <= 0:
+                        del tracker_data[context_file_path]
+                        if os.path.exists(context_file_path):
+                            os.remove(context_file_path)  # Safely delete the file when no processes are using it
+                            print(f"Context file {context_file_path} deleted.")
+            cls._save_tracker(tracker_data)
+
+    @classmethod
+    def cleanup_orphaned_files(cls):
+        tracker_data = cls._load_tracker()
+        current_time = time.time()
+        
+        for context_file_path, info in list(tracker_data.items()):
+            # Check if file hasn't been accessed within the timeout period
+            if current_time - info["last_used"] > cls.timeout:
+                if os.path.exists(context_file_path):
+                    os.remove(context_file_path)
+                    print(f"Orphaned file {context_file_path} deleted.")
+                # Remove the tracker entry
+                del tracker_data[context_file_path]
+        
+        cls._save_tracker(tracker_data)
+
+def periodic_cleanup():
+    while True:
+        time.sleep(120)  # Check every 5 minutes
+        ContextFileManager.cleanup_orphaned_files()
+
+# Start the cleanup thread when the application starts
+cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
+cleanup_thread.start()
 class PDFProcessor:
     def __init__(self, input_path, output_path):
         """
@@ -74,7 +144,7 @@ class PDFProcessor:
             header_area = fitz.Rect(0, 0, page.rect.width, 50)  # Adjust coordinates as necessary
             page.add_redact_annot(header_area, fill=(1, 1, 1))  # Fill with white color
             page.apply_redactions()
-
+    
     def process_pdf(self, pages_to_delete):
         """
         Processes the PDF by deleting specified pages and removing headers.
@@ -100,19 +170,36 @@ class PDFProcessor:
 
 
 class MCQGenerator:
-    def __init__(self, pdf_path, num, key, knowledge_base_path, embeddings_path):
+    def __init__(self, pdf_path, num, key, knowledge_base_path, embeddings_path, knowledge_base_name):
+        ContextFileManager.cleanup_orphaned_files()
         # Replace SentenceTransformer with USE (TensorFlow-based)
         self.embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder/4")
         self.loader = PDFMinerLoader(pdf_path)
         self.num = num
         self.key = key
-        self.knowledge_base = self.load_knowledge_base(knowledge_base_path)
+        self.knowledge_base_name = knowledge_base_name  # Store the knowledge base name
+        self.knowledge_base = self.load_knowledge_base(knowledge_base_path, knowledge_base_name)  # Pass it here
         self.knowledge_base_embeddings = self.load_preprocessed_embeddings(embeddings_path)
+    
+    def load_knowledge_base(self, path, knowledge_base_name):
+        # Define context path and add usage to the tracker
+        self.temp_context_path = f"{knowledge_base_name}_context.txt"
+        ContextFileManager.add_usage(self.temp_context_path)  # Track file usage
 
-    def load_knowledge_base(self, path):
+        if os.path.exists(self.temp_context_path):
+            return self.temp_context_path
+
+        # Load from pickle and write to temp context file
         with open(path, 'rb') as file:
-            return pickle.load(file)
-        
+            knowledge_data = pickle.load(file)
+
+        with open(self.temp_context_path, 'w', encoding='utf-8') as temp_file:
+            for doc in knowledge_data:
+                temp_file.write(doc.page_content + "\n")
+
+        return self.temp_context_path
+
+     
     def load_preprocessed_embeddings(self, path='knowledge_base_embeddings.pkl'):
         try:
             with open(path, 'rb') as f:
@@ -127,37 +214,19 @@ class MCQGenerator:
         embeddings = jax.vmap(self.sentence_model.encode)(content_list)
         return embeddings
 
-
+    
     def extract_relevant_context(self, content, top_n=3):
-        """Extract the top N most relevant contexts using sentence embeddings."""
-        try:
-            st.write("Starting context extraction")
-
-            # Convert content to list if it is a set
-            if isinstance(content, set):
-                content = list(content)
-
-            if isinstance(content, str):
-                content = [content]  # Convert to list
-
-            # Generate embeddings for the content using USE
-            content_embedding = self.embed(content)
-            knowledge_embeddings = self.embed([doc.page_content for doc in self.knowledge_base])
-
-            # Calculate similarities using cosine similarity
-            similarities = cosine_similarity(content_embedding, knowledge_embeddings).flatten()
-
-            # Extract top N relevant contexts
-            top_indices = np.argsort(similarities)[-top_n:]
-            relevant_context = " ".join([self.knowledge_base[i].page_content for i in top_indices])
-
-            return relevant_context
-        except Exception as e:
-            st.error(f"Error during context extraction: {e}")
-            return ""
+        """Extracts top N relevant contexts from the temporary file."""
+        ContextFileManager.update_last_used(self.temp_context_path)
+        with open(self.temp_context_path, 'r',encoding="utf-8") as file:
+            knowledge_data = file.readlines()
 
 
+    def cleanup_temp_file(self):
+        # Remove usage from the tracker, delete only if no other processes are using it
+        ContextFileManager.remove_usage(self.temp_context_path)
 
+    
     @staticmethod
     def vectorize_content(content, vectorizer):
         return vectorizer.transform([content.lower()])
@@ -498,7 +567,7 @@ class MCQGenerator:
 
                                 '''
             try:
-
+                
                 print(Count)
         # human_prompt is assigned the result of f''' You must generate atleast {num_questions} multiple-choice questions (MCQs) based on the provided topic and learning objective using text {text}.
         # human_prompt is assigned the result of f''' You must generate atleast {num_questions} multiple-choice questions (MCQs) based on the provided topic and learning objective using text {text}.
@@ -564,7 +633,7 @@ class MCQGenerator:
                 os.remove(json_path)
 
             json_string = json.dumps(results, skipkeys=True, allow_nan=True, indent=4)
-            with open(json_path, "w") as outfile:
+            with open(json_path, "w",encoding="utf-8") as outfile:
                 outfile.write(json_string)
 
             return json_string
@@ -632,7 +701,7 @@ def get_bert_embeddings(questions):
     question_embeddings = embed_model(questions)
     return question_embeddings
 
-def final_deduplication_check(questions_list, similarity_threshold=75):
+def final_deduplication_check(questions_list, similarity_threshold):
     """
     Perform a final duplication check across the list of generated questions.
     This ensures that no questions are repeated.
@@ -664,6 +733,13 @@ def final_deduplication_check(questions_list, similarity_threshold=75):
             unique_set.add(question_text)  # Add normalized question text to the set
     
     return unique_questions
+
+def cleanup_temp_file(self):
+    if os.path.exists(self.temp_context_path):
+        os.remove(self.temp_context_path)
+        print(f"Temp file deleted:{self.temp_context_path}")
+
+
 def clean_pdf_text(pdf_text):
     """
     Clean the extracted PDF text by removing unwanted sections and normalizing spaces.
@@ -743,6 +819,7 @@ def contextual_deduplication_check(questions_list, similarity_threshold):
             unique_embeddings.append(question_embedding)  # Store the embedding of the unique question
         else:
             st.write("Question Same: ",question)
+            #st.write("Question Embeddings: ",question_embedding)
 
     return unique_questions
 def filter_out_similar_pdf_questions(generated_questions, pdf_questions, similarity_threshold=80):
@@ -800,86 +877,7 @@ def is_duplicate(question, existing_questions, generator, threshold):
     # Check if the maximum similarity exceeds the threshold
     return np.max(similarity_scores) > threshold
 
-
-class DriveService:
-    def __init__(self, root_folder_id, encrypted_file_path="ECS.json"):
-        """
-        Initializes the DriveService with the root folder ID and the encrypted file path.
-        """
-        self.service = self.authenticate_service_account(encrypted_file_path)
-        self.root_folder_id = root_folder_id
-
-    def authenticate_service_account(self, encrypted_file_path):
-        """
-        Authenticates using the encrypted service account file and decryption key.
-        """
-        SCOPES = ['https://www.googleapis.com/auth/drive']
-        
-        # Retrieve the decryption key from environment variables (set in GitHub Secrets)
-        decryption_key = 'uGhkMAv6i9VrzDyQMt4UYWEQAjtupEJ6tiPMCXpgqXI='
-
-        if not decryption_key:
-            st.error("Decryption key not found in environment.")
-            raise ValueError("Decryption key not found.")
-
-        # Read the encrypted file from the repository
-        try:
-            with open(encrypted_file_path, 'rb') as encrypted_file:
-                encrypted_data = encrypted_file.read()
-
-            # Decrypt the file contents
-            cipher = Fernet(decryption_key.encode())  # Decryption key should be in bytes
-            decrypted_data = cipher.decrypt(encrypted_data)
-
-            # Parse the decrypted JSON string to create credentials
-            credentials_info = json.loads(decrypted_data)
-
-            # Create Google Drive API credentials from the decrypted info
-            credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
-
-            # Build the Google Drive API service
-            service = build('drive', 'v3', credentials=credentials)
-            return service
-
-        except Exception as e:
-            st.error(f"Error during service account authentication: {e}")
-            raise
-        
-    def download_files(self, course_name, save_path):
-        """
-        Download the required knowledge base files for the specified course from Google Drive.
-        """
-        # Search for the folder by name within the specified root folder
-        query = f"'{self.root_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and name='{course_name}'"
-        response = self.service.files().list(q=query, spaces='drive').execute()
-        course_folder = response.get('files', [])
-
-        if not course_folder:
-            raise ValueError(f"Folder for course {course_name} not found.")
-        
-        course_folder_id = course_folder[0]['id']
-
-        # Download files from the course folder
-        files = self.service.files().list(q=f"'{course_folder_id}' in parents").execute().get('files', [])
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
-        
-        for file in files:
-            if file['name'] in ['processed_texts.pkl', 'knowledge_base_embeddings.pkl']:
-                request = self.service.files().get_media(fileId=file['id'])
-                file_path = os.path.join(save_path, file['name'])
-                with open(file_path, 'wb') as f:
-                    downloader = googleapiclient.http.MediaIoBaseDownload(f, request)
-                    done = False
-                    while not done:
-                        status, done = downloader.next_chunk()
-                        print(f"Download {int(status.progress() * 100)}%.")
-
-                print(f"Downloaded {file['name']} to {save_path}")
-
-
-
-def get_knowledge_base_path(selected_knowledge):
+def get_knowledge_path(selected_knowledge):
     """
     Returns the path to the processed_text.pkl and knowledge_base_embeddings.pkl 
     based on the selected knowledge file.
@@ -919,12 +917,74 @@ def get_knowledge_base_path(selected_knowledge):
     else:
         return None, None
 
+
+def download_blob(bucket_name, source_blob_name, destination_file_name):
+    """Downloads a blob from the bucket."""
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(source_blob_name)
+    blob.download_to_filename(destination_file_name)
+
+    print(f"Downloaded {source_blob_name} to {destination_file_name}.")
+
+def get_knowledge_base_path(selected_knowledge, bucket_name):
+    """Downloads the knowledge base files from GCP and returns their local paths."""
+    
+    knowledge_base_dir = {
+        "Child Growth and Development": r"KnowledgeBase/Child Growth and Development/",
+        "Philosophical and Theoretical Perspectives in Education": r"KnowledgeBase/Philosophical and Theoretical Perspectives in Education/",
+        "Pedagogical Studies": r"KnowledgeBase/Pedagogical Studies/",
+        "Pedagogical Studies":r"KnowledgeBase/Pedagogical Studies/",
+        "Curriculum Studies": r"KnowledgeBase/Curriculum Studies/",
+        "Educational Assessment & Evaluation": r"KnowledgeBase/Educational Assessment & Evaluation/",
+        "Safety and Security": r"KnowledgeBase/Safety and Security/",
+        "Diversity, Equity and Inclusion - 1": r"KnowledgeBase/Diversity, Equity and Inclusion - 1/",
+        "21st Century Skills - Holistic Education": r"KnowledgeBase/21st Century Skills - Holistic Education/",
+        "Personal Professional Development": r"KnowledgeBase/Personal Professional Development/",
+        "School Administration and Management": r"KnowledgeBase/School Administration and Management/",
+        "Promoting Health and Wellness through Education": r"KnowledgeBase/Promoting Health and Wellness through Education/",
+        "Guidance and Counselling": r"KnowledgeBase/Guidance and Counselling/",
+        "Vocational Education & Training": r"KnowledgeBase/Vocational Education & Training/",
+        "Educational Leadership & Management": r"KnowledgeBase/Educational Leadership & Management/",
+        "Designing/Setting up a School": r"KnowledgeBase/Designing/",
+        "Research Methodology": r"KnowledgeBase/Research Methodology/",
+        "Diversity, Equity and Inclusion - 2": r"KnowledgeBase/Diversity, Equity and Inclusion - 2/",
+        "Monitoring Implementation and Evaluation": r"KnowledgeBase/Monitoring Implementation and Evaluation/",
+        "Public Private Partnership": r"KnowledgeBase/Public Private Partnership/"
+    }
+    
+    base_path = knowledge_base_dir.get(selected_knowledge)
+    
+    if base_path:
+        # Define GCP bucket paths
+        processed_texts_blob = os.path.join(base_path, "processed_texts.pkl")
+        embeddings_blob = os.path.join(base_path, "knowledge_base_embeddings.pkl")
+        
+        # Define local paths
+        local_processed_texts = os.path.join("temp", "processed_texts.pkl")
+        local_embeddings = os.path.join("temp", "knowledge_base_embeddings.pkl")
+
+        # Create 'temp' directory if it doesn't exist
+        if not os.path.exists("temp"):
+            os.makedirs("temp")
+
+        # Download files from GCP bucket to local directory
+        download_blob(bucket_name, processed_texts_blob, local_processed_texts)
+        download_blob(bucket_name, embeddings_blob, local_embeddings)
+
+        return local_processed_texts, local_embeddings
+    else:
+        print("Knowledge base not found.")
+        return None, None
+
+FileName=""
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\govind.audichya\Downloads\codeforprtoquestiongenerator\Teacher_Traning_MCQ_with_comments\Teacher_Traning_MCQ\Teacher_Traning_MCQ-main-2\key.json"
 def main():
     Duplicate = 0  # Initialize Duplicate counter
-    
-    st.title("PDF Processing and MCQ Generation")
+    bucket_name = "amtstore"
+    st.title("AMT Generator")
 
-    user_api_key = st.text_input("Enter your OpenAI API key:", type="password")
+    user_api_key = st.text_input("Enter your OpenAI API key:", type="password", value="sk-proj-YOkYCZ19cjg0WGBohpfST3BlbkFJym3xJbusvkdRhjg3vhUd")
     num_questions = st.number_input('Enter the number of questions (in between 10 to 100) to generate:', min_value=10, max_value=100, value=40)
 
     st.write("Choose your custom test level distribution in questions")
@@ -959,31 +1019,20 @@ def main():
         "Monitoring Implementation and Evaluation",
         "Public Private Partnership"
     ]
-    root_folder_id = '1rRlr1ZRc7EC01z4VZ1uXc028OrObkfjz'
-    selected_knowledge = st.selectbox("Select a knowledge base:", knowledge_options)
-    #knowledge_base_path, embeddings_path = get_knowledge_base_path(selected_knowledge)
-
-    drive_service = DriveService(
-    root_folder_id=root_folder_id
-    )
     
-    # Define the save path for downloaded knowledge base files
-    save_path = "knowledge_base_files"
-    try:
-        # Download files from Google Drive based on the selected knowledge base
-        drive_service.download_files(selected_knowledge, save_path)
-        st.success(f"Files for {selected_knowledge} have been downloaded to {save_path}")
-        knowledge_base_path = os.path.join(save_path, "processed_texts.pkl")
-        embeddings_path = os.path.join(save_path, "knowledge_base_embeddings.pkl")
-    except ValueError as ve:
-        st.error(str(ve))
+    selected_knowledge = st.selectbox("Select a knowledge base:", knowledge_options)
+    knowledge_base_path, embeddings_path = get_knowledge_base_path(selected_knowledge,bucket_name)
+    
+    if not knowledge_base_path or not embeddings_path:
+        st.error(f"Knowledge base files not found for {selected_knowledge}.")
         return
+
     uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
 
     if uploaded_file is not None:
         input_path = os.path.join("uploads", uploaded_file.name)
         st.write(f"Input file path: {input_path}")
-
+        FileName = uploaded_file.name
         if not os.path.exists("uploads"):
             os.makedirs("uploads")
 
@@ -1004,28 +1053,9 @@ def main():
             "Tip 5: Avoid repetitive language in options.",
         ]
 
-        tip_placeholder = st.empty()  # Create a placeholder for displaying tips
-        display_tips = True  # A flag to control the display of tips
+        
 
-        async def show_tips():
-            try:
-                while display_tips:
-                    for tip in tips:
-                        if not display_tips:
-                            break
-                        tip_placeholder.text(tip)  # Display the current tip
-                        await asyncio.sleep(3)  # Wait for 3 seconds before changing the tip
-            except asyncio.CancelledError:
-                pass
-
-        def start_tips_display():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(show_tips())
-
-        # Start the tips display in a separate thread using asyncio
-        tip_thread = threading.Thread(target=start_tips_display, daemon=True)
-        tip_thread.start()
+       
       
         if st.button("Apply"):
             try:
@@ -1037,15 +1067,16 @@ def main():
                             total_pages = fitz.open(input_path).page_count
                             pages_to_delete = list(range(2)) + list(range(total_pages - 2, total_pages))
                             output_file = pdf_processor.process_pdf(pages_to_delete)
-
-                            generator = MCQGenerator(output_file, num_questions, user_api_key, knowledge_base_path, embeddings_path)
+                            
+                            generator = MCQGenerator(output_file, num_questions, user_api_key, knowledge_base_path, embeddings_path,selected_knowledge)
+                            
                             text_data = generator.load_and_clean_document()
                             topic, learning_obj, text_data_rem = generator.data_topic_learning_rem(text_data)
 
                             #st.write("Extracted relevant context:", generator.extract_relevant_context(text_data))
 
                             generator.create_mcq_model()
-
+                           
                             # NEW STEP 1: Extract questions from the PDF
                             pdf_questions = extract_questions_from_pdf(text_data)
 
@@ -1084,8 +1115,9 @@ def main():
                                                 else:
                                                     Duplicate += 1
                                             else:
-                                                raise ValueError(f"Generated question missing 'bloom_level' or 'question' key.")
+                                                print("Error with Bloom_Key and Question Key")
                                         retries = 0
+                                        
                                     except Exception as e:
                                         st.error(f"Error generating questions for {bloom_level}: {e}")
                                         retries += 1
@@ -1131,12 +1163,13 @@ def main():
                                             for question in results:
                                                 if "bloom_level" in question and "question" in question:
                                                     question_text = question["question"]
-                                                    if not is_duplicate(question_text, unique_questions , Strictness_value):
+                                                    if not is_duplicate(question_text, unique_questions,Strictness_value):
                                                         unique_questions.add(question_text)
                                                         generated_questions.append(question)
                                                 else:
-                                                    raise ValueError(f"Generated question missing 'bloom_level' or 'question' key.")
+                                                    print("Error with Bloom_Key and Question Key")
                                             break
+                                        
                                         except Exception as e:
                                             st.error(f"Error generating additional questions for {level}: {e}")
                                             retries += 1
@@ -1148,29 +1181,32 @@ def main():
                             filtered_questions = filter_out_similar_pdf_questions(generated_questions, pdf_questions)
 
                             # Call to final deduplication check (NO generator instance passed)
-                            final_questions = contextual_deduplication_check(filtered_questions, Strictness_value)
+                            final_questions = contextual_deduplication_check(filtered_questions,Strictness_value)
                             st.write(f"Total unique questions after final deduplication: {len(final_questions)}")
-
+                            if ".pdf" in FileName:
+                                FileName = FileName.replace(".pdf","")
                             # Finally save and provide the download link
+                            
                             jsonfile = generator.save_results_to_json(final_questions)
                             csv_file_path = generator.convert_json_to_csv(jsonfile)
-                            display_tips = False  # Stop the tip display thread
-                            tip_placeholder.empty()
+                            
                             st.success("File processed successfully!")
                             st.write(f"Total duplicate questions removed: {Duplicate}")
                             st.write(f"Total questions generated: {len(final_questions)}")
                             st.download_button(
                                 label="Download CSV",
                                 data=open(csv_file_path, "rb"),
-                                file_name="questions.csv",
+                                file_name=f"{FileName}_AMT.csv",
                                 mime="text/csv",
                             )
+                            generator.cleanup_temp_file()
                         except Exception as e:
                             raise Exception(f"Something went wrong, please try again: {e}")
                 else:
                     st.error(f'Please make sure that the distribution is perfect !!', icon="🚨")
             except Exception as e:
                 st.error(f"An error occurred: {e}")
+            
 
 if __name__ == "__main__":
     main()
