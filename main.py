@@ -984,7 +984,7 @@ def main():
     bucket_name = "amtstore"
     st.title("AMT Generator")
 
-    user_api_key = st.text_input("Enter your OpenAI API key:", type="password", value="sk-proj-YOkYCZ19cjg0WGBohpfST3BlbkFJym3xJbusvkdRhjg3vhUd")
+    user_api_key = st.text_input("Enter your OpenAI API key:", type="password")
     num_questions = st.number_input('Enter the number of questions (in between 10 to 100) to generate:', min_value=10, max_value=100, value=40)
 
     st.write("Choose your custom test level distribution in questions")
